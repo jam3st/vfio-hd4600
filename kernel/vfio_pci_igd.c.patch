@@ -1,0 +1,50 @@
+diff --git a/drivers/vfio/pci/vfio_pci_igd.c b/drivers/vfio/pci/vfio_pci_igd.c
+index 53d97f459252..6de28a319391 100644
+--- a/drivers/vfio/pci/vfio_pci_igd.c
++++ b/drivers/vfio/pci/vfio_pci_igd.c
+@@ -58,7 +58,9 @@ static int vfio_pci_igd_opregion_init(struct vfio_pci_device *vdev)
+ 	u32 addr, size;
+ 	void *base;
+ 	int ret;
+-
++	u32 offset;
++	u32 offsetMask = ((1u << PAGE_SHIFT) - 1u);
++	u32 pageMask = ~offsetMask;
+ 	ret = pci_read_config_dword(vdev->pdev, OPREGION_PCI_ADDR, &addr);
+ 	if (ret)
+ 		return ret;
+@@ -66,16 +68,22 @@ static int vfio_pci_igd_opregion_init(struct vfio_pci_device *vdev)
+ 	if (!addr || !(~addr))
+ 		return -ENODEV;
+ 
+-	base = memremap(addr, OPREGION_SIZE, MEMREMAP_WB);
++	base = memremap(addr & pageMask, 8192, MEMREMAP_WB);
++	printk("MASK is 0x%08x", pageMask);
++
++	if (!base)
++		base = memremap(addr & pageMask, 8192, MEMREMAP_WB);
+ 	if (!base)
+ 		return -ENOMEM;
+ 
+-	if (memcmp(base, OPREGION_SIGNATURE, 16)) {
++	offset = addr & offsetMask;
++	printk("OFFSET is 0x%08x", offset);
++	if (memcmp(base + offset, OPREGION_SIGNATURE, 16)) {
+ 		memunmap(base);
+ 		return -EINVAL;
+ 	}
+ 
+-	size = le32_to_cpu(*(__le32 *)(base + 16));
++	size = le32_to_cpu(*(__le32 *)(base + 16 + offset ));
+ 	if (!size) {
+ 		memunmap(base);
+ 		return -EINVAL;
+@@ -93,7 +101,7 @@ static int vfio_pci_igd_opregion_init(struct vfio_pci_device *vdev)
+ 	ret = vfio_pci_register_dev_region(vdev,
+ 		PCI_VENDOR_ID_INTEL | VFIO_REGION_TYPE_PCI_VENDOR_TYPE,
+ 		VFIO_REGION_SUBTYPE_INTEL_IGD_OPREGION,
+-		&vfio_pci_igd_regops, size, VFIO_REGION_INFO_FLAG_READ, base);
++		&vfio_pci_igd_regops, 8192,  VFIO_REGION_INFO_FLAG_MMAP | VFIO_REGION_INFO_FLAG_READ | VFIO_REGION_INFO_FLAG_WRITE, base);
+ 	if (ret) {
+ 		memunmap(base);
+ 		return ret;

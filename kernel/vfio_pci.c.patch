@@ -1,0 +1,37 @@
+diff --git a/drivers/vfio/pci/vfio_pci.c b/drivers/vfio/pci/vfio_pci.c
+index de881a6cff35..9903f04bf17e 100644
+--- a/drivers/vfio/pci/vfio_pci.c
++++ b/drivers/vfio/pci/vfio_pci.c
+@@ -336,10 +336,10 @@ static int vfio_pci_enable(struct vfio_pci_device *vdev)
+ 	if (!vfio_vga_disabled() && vfio_pci_is_vga(pdev))
+ 		vdev->has_vga = true;
+ 
+-
+-	if (vfio_pci_is_vga(pdev) &&
+-	    pdev->vendor == PCI_VENDOR_ID_INTEL &&
++	if (
++	    pdev->vendor == PCI_VENDOR_ID_INTEL && (pdev->device == 0x0412 || pdev->device ==  0x0166) &&
+ 	    IS_ENABLED(CONFIG_VFIO_PCI_IGD)) {
++		printk("initializing vfio_pci_igd_init");
+ 		ret = vfio_pci_igd_init(vdev);
+ 		if (ret) {
+ 			pci_warn(pdev, "Failed to setup Intel IGD regions\n");
+@@ -1587,7 +1587,17 @@ static int vfio_pci_mmap(void *device_data, struct vm_area_struct *vma)
+ 		return -EINVAL;
+ 	if ((vma->vm_flags & VM_SHARED) == 0)
+ 		return -EINVAL;
+-	if (index >= VFIO_PCI_NUM_REGIONS) {
++	if (index == VFIO_PCI_NUM_REGIONS) {
++		u32 addr;
++        	ret = pci_read_config_dword(vdev->pdev, 0xfcu, &addr);
++		if(ret != 0) {
++			printk("Could not read OpReg address");
++			return ret;
++		}
++		return remap_pfn_range(vma,vma->vm_start, addr >> PAGE_SHIFT,
++			       8192, vma->vm_page_prot);
++	}
++	if (index > VFIO_PCI_NUM_REGIONS) {
+ 		int regnum = index - VFIO_PCI_NUM_REGIONS;
+ 		struct vfio_pci_region *region = vdev->region + regnum;
+ 

@@ -1,0 +1,355 @@
+commit fad5c5b8fb3e6865ad6076b305b142e7248a8c16
+Author: Your Name <you@example.com>
+Date:   Thu Jul 23 07:34:50 2020 +0900
+
+    Forked
+
+diff --git a/tools/virtiofsd/fuse_virtio.c b/tools/virtiofsd/fuse_virtio.c
+index 3b6d16a041..44c007b55c 100644
+--- a/tools/virtiofsd/fuse_virtio.c
++++ b/tools/virtiofsd/fuse_virtio.c
+@@ -846,126 +846,10 @@ int virtio_loop(struct fuse_session *se)
+     return 0;
+ }
+ 
+-static void strreplace(char *s, char old, char new)
+-{
+-    for (; *s; ++s) {
+-        if (*s == old) {
+-            *s = new;
+-        }
+-    }
+-}
+-
+-static bool fv_socket_lock(struct fuse_session *se)
+-{
+-    g_autofree gchar *sk_name = NULL;
+-    g_autofree gchar *pidfile = NULL;
+-    g_autofree gchar *dir = NULL;
+-    Error *local_err = NULL;
+-
+-    dir = qemu_get_local_state_pathname("run/virtiofsd");
+-
+-    if (g_mkdir_with_parents(dir, S_IRWXU) < 0) {
+-        fuse_log(FUSE_LOG_ERR, "%s: Failed to create directory %s: %s",
+-                 __func__, dir, strerror(errno));
+-        return false;
+-    }
+-
+-    sk_name = g_strdup(se->vu_socket_path);
+-    strreplace(sk_name, '/', '.');
+-    pidfile = g_strdup_printf("%s/%s.pid", dir, sk_name);
+-
+-    if (!qemu_write_pidfile(pidfile, &local_err)) {
+-        error_report_err(local_err);
+-        return false;
+-    }
+-
+-    return true;
+-}
+-
+-static int fv_create_listen_socket(struct fuse_session *se)
+-{
+-    struct sockaddr_un un;
+-    mode_t old_umask;
+-
+-    /* Nothing to do if fd is already initialized */
+-    if (se->vu_listen_fd >= 0) {
+-        return 0;
+-    }
+-
+-    if (strlen(se->vu_socket_path) >= sizeof(un.sun_path)) {
+-        fuse_log(FUSE_LOG_ERR, "Socket path too long\n");
+-        return -1;
+-    }
+-
+-    if (!strlen(se->vu_socket_path)) {
+-        fuse_log(FUSE_LOG_ERR, "Socket path is empty\n");
+-        return -1;
+-    }
+-
+-    /* Check the vu_socket_path is already used */
+-    if (!fv_socket_lock(se)) {
+-        return -1;
+-    }
+-
+-    /*
+-     * Create the Unix socket to communicate with qemu
+-     * based on QEMU's vhost-user-bridge
+-     */
+-    unlink(se->vu_socket_path);
+-    strcpy(un.sun_path, se->vu_socket_path);
+-    size_t addr_len = sizeof(un);
+-
+-    int listen_sock = socket(AF_UNIX, SOCK_STREAM, 0);
+-    if (listen_sock == -1) {
+-        fuse_log(FUSE_LOG_ERR, "vhost socket creation: %m\n");
+-        return -1;
+-    }
+-    un.sun_family = AF_UNIX;
+-
+-    /*
+-     * Unfortunately bind doesn't let you set the mask on the socket,
+-     * so set umask to 077 and restore it later.
+-     */
+-    old_umask = umask(0077);
+-    if (bind(listen_sock, (struct sockaddr *)&un, addr_len) == -1) {
+-        fuse_log(FUSE_LOG_ERR, "vhost socket bind: %m\n");
+-        close(listen_sock);
+-        umask(old_umask);
+-        return -1;
+-    }
+-    umask(old_umask);
+-
+-    if (listen(listen_sock, 1) == -1) {
+-        fuse_log(FUSE_LOG_ERR, "vhost socket listen: %m\n");
+-        close(listen_sock);
+-        return -1;
+-    }
+-
+-    se->vu_listen_fd = listen_sock;
+-    return 0;
+-}
+ 
+ int virtio_session_mount(struct fuse_session *se)
+ {
+-    int ret;
+ 
+-    ret = fv_create_listen_socket(se);
+-    if (ret < 0) {
+-        return ret;
+-    }
+-
+-    se->fd = -1;
+-
+-    fuse_log(FUSE_LOG_INFO, "%s: Waiting for vhost-user socket connection...\n",
+-             __func__);
+-    int data_sock = accept(se->vu_listen_fd, NULL, NULL);
+-    if (data_sock == -1) {
+-        fuse_log(FUSE_LOG_ERR, "vhost socket accept: %m\n");
+-        close(se->vu_listen_fd);
+-        return -1;
+-    }
+-    close(se->vu_listen_fd);
+-    se->vu_listen_fd = -1;
+     fuse_log(FUSE_LOG_INFO, "%s: Received vhost-user socket connection\n",
+              __func__);
+ 
+@@ -973,11 +857,10 @@ int virtio_session_mount(struct fuse_session *se)
+     se->virtio_dev = calloc(sizeof(struct fv_VuDev), 1);
+     if (!se->virtio_dev) {
+         fuse_log(FUSE_LOG_ERR, "%s: virtio_dev calloc failed\n", __func__);
+-        close(data_sock);
++        close(se->vu_socketfd);
+         return -1;
+     }
+ 
+-    se->vu_socketfd = data_sock;
+     se->virtio_dev->se = se;
+     pthread_rwlock_init(&se->virtio_dev->vu_dispatch_rwlock, NULL);
+     vu_init(&se->virtio_dev->dev, 2, se->vu_socketfd, fv_panic, fv_set_watch,
+--- a/tools/virtiofsd/passthrough_ll.c	2020-08-11 15:17:15.000000000 -0400
++++ b/tools/virtiofsd/passthrough_ll.c	2020-08-13 09:41:13.436335834 -0400
+@@ -2386,7 +2386,7 @@
+ static void setup_namespaces(struct lo_data *lo, struct fuse_session *se)
+ {
+     pid_t child;
+-    char template[] = "virtiofsd-XXXXXX";
++    char template[] = "/tmp/virtiofsd-XXXXXX";
+     char *tmpdir;
+
+     /*
+@@ -2815,6 +2815,145 @@
+     free(lo->source);
+ }
+ 
++
++static void strreplace(char *s, char old, char new)
++{
++    for (; *s; ++s) {
++        if (*s == old) {
++            *s = new;
++        }
++    }
++}
++
++
++static bool fv_socket_lock(struct fuse_session *se)
++{
++    g_autofree gchar *sk_name = NULL;
++    g_autofree gchar *pidfile = NULL;
++    //g_autofree gchar *dir = NULL;
++    char *dir;
++    Error *local_err = NULL;
++
++    dir = "/run/virtiofsd";
++
++    if (g_mkdir_with_parents(dir, S_IRWXU) < 0) {
++        fuse_log(FUSE_LOG_ERR, "%s: Failed to create directory %s: %s",
++                 __func__, dir, strerror(errno));
++        return false;
++    }
++
++    sk_name = g_strdup(se->vu_socket_path);
++    strreplace(sk_name, '/', '.');
++    pidfile = g_strdup_printf("%s/%s.pid", dir, sk_name);
++
++    if (!qemu_write_pidfile(pidfile, &local_err)) {
++        error_report_err(local_err);
++        return false;
++    }
++
++    return true;
++}
++
++static int fv_create_listen_socket(struct fuse_session *se)
++{
++    struct sockaddr_un un;
++    mode_t old_umask;
++
++    /* Nothing to do if fd is already initialized */
++    if (se->vu_listen_fd >= 0) {
++        return se->vu_listen_fd;
++    }
++
++    if (strlen(se->vu_socket_path) >= sizeof(un.sun_path)) {
++        fuse_log(FUSE_LOG_ERR, "Socket path too long\n");
++        return -1;
++    }
++
++    if (!strlen(se->vu_socket_path)) {
++        fuse_log(FUSE_LOG_ERR, "Socket path is empty\n");
++        return -1;
++    }
++
++    /* Check the vu_socket_path is already used */
++    if (!fv_socket_lock(se)) {
++        return -1;
++    }
++
++    /*
++     * Create the Unix socket to communicate with qemu
++     * based on QEMU's vhost-user-bridge
++     */
++    unlink(se->vu_socket_path);
++    strcpy(un.sun_path, se->vu_socket_path);
++    size_t addr_len = sizeof(un);
++
++    int listen_sock = socket(AF_UNIX, SOCK_STREAM, 0);
++    if (listen_sock == -1) {
++        fuse_log(FUSE_LOG_ERR, "vhost socket creation: %m\n");
++        return -1;
++    }
++    un.sun_family = AF_UNIX;
++
++    /*
++     * Unfortunately bind doesn't let you set the mask on the socket,
++     * so set umask to 077 and restore it later.
++     */
++    old_umask = umask(0007);
++    if (bind(listen_sock, (struct sockaddr *)&un, addr_len) == -1) {
++        fuse_log(FUSE_LOG_ERR, "vhost socket bind: %m\n");
++        close(listen_sock);
++        umask(old_umask);
++        return -1;
++    }
++    umask(old_umask);
++
++    if (listen(listen_sock, 1) == -1) {
++        fuse_log(FUSE_LOG_ERR, "vhost socket listen: %m\n");
++        close(listen_sock);
++        return -1;
++    }
++
++    se->vu_listen_fd = listen_sock;
++    return listen_sock;
++}
++
++static int wait_for_connection(struct fuse_session *se)
++{
++    int ret;
++    int fd = se->vu_listen_fd;
++    ret = fv_create_listen_socket(se);
++    if (ret < 0) {
++        return ret;
++    }
++
++    fd = se->vu_listen_fd;
++    for(;;) {
++        int kid = -1;
++        fuse_log(FUSE_LOG_INFO, "%s: Waiting for vhost-user socket connection...\n",
++                 __func__);
++        int data_sock = accept(fd, NULL, NULL);
++        if (data_sock == -1) {
++            fuse_log(FUSE_LOG_ERR, "vhost socket accept: %m\n");
++            close(se->vu_listen_fd);
++            return -1;
++        }
++        kid = fork();
++        if(kid == 0) {
++            fuse_log(FUSE_LOG_INFO, "%s: Accepted connection...\n",
++                     __func__);
++            se->vu_socketfd = data_sock;
++            break;
++        } else if(kid < 0) {
++            fuse_log(FUSE_LOG_INFO, "%s: forked..\n",
++                     __func__);
++        }
++    }
++    close(se->vu_listen_fd);
++    se->vu_listen_fd = -1;
++    virtio_session_mount(se);
++    return ret;
++}
++
+ int main(int argc, char *argv[])
+ {
+     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+@@ -2838,18 +2977,7 @@
+     lo.root.fuse_ino = FUSE_ROOT_ID;
+     lo.cache = CACHE_AUTO;
+ 
+-    /*
+-     * Set up the ino map like this:
+-     * [0] Reserved (will not be used)
+-     * [1] Root inode
+-     */
+-    lo_map_init(&lo.ino_map);
+-    lo_map_reserve(&lo.ino_map, 0)->in_use = false;
+-    root_elem = lo_map_reserve(&lo.ino_map, lo.root.fuse_ino);
+-    root_elem->inode = &lo.root;
+ 
+-    lo_map_init(&lo.dirp_map);
+-    lo_map_init(&lo.fd_map);
+ 
+     if (fuse_parse_cmdline(&args, &opts) != 0) {
+         goto err_out1;
+@@ -2927,6 +3055,18 @@
+         fuse_log(FUSE_LOG_ERR, "timeout is negative (%lf)\n", lo.timeout);
+         exit(1);
+     }
++    /*
++     * Set up the ino map like this:
++     * [0] Reserved (will not be used)
++     * [1] Root inode
++     */
++    lo_map_init(&lo.ino_map);
++    lo_map_reserve(&lo.ino_map, 0)->in_use = false;
++    root_elem = lo_map_reserve(&lo.ino_map, lo.root.fuse_ino);
++    root_elem->inode = &lo.root;
++
++    lo_map_init(&lo.dirp_map);
++    lo_map_init(&lo.fd_map);
+ 
+     se = fuse_session_new(&args, &lo_oper, sizeof(lo_oper), &lo);
+     if (se == NULL) {
+@@ -2943,6 +3083,8 @@
+ 
+     fuse_daemonize(opts.foreground);
+ 
++    wait_for_connection(se);
++
+     setup_nofile_rlimit(opts.rlimit_nofile);
+ 
+     /* Must be before sandbox since it wants /proc */
+            return -1;
