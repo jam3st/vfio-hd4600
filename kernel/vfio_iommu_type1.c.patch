@@ -2,14 +2,16 @@ diff --git a/drivers/vfio/vfio_iommu_type1.c b/drivers/vfio/vfio_iommu_type1.c
 index 5e556ac9102a..952b95e8d7cb 100644
 --- a/drivers/vfio/vfio_iommu_type1.c
 +++ b/drivers/vfio/vfio_iommu_type1.c
-@@ -2065,6 +2065,10 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
+@@ -2065,6 +2065,12 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
  	if (ret)
  		goto out_detach;
  
-+	ret = iommu_map(domain->domain, 0xBF000000, 0xBF000000, 0x8000000,  IOMMU_READ | IOMMU_WRITE);
++#error "Fix the line below"
++#define _MY_BIOS_STOLEM_MEMORY_ADDRESS_ 0xBF000000
++	ret = iommu_map(domain->domain, _MY_BIOS_STOLEM_MEMORY_ADDRESS_, _MY_BIOS_STOLEM_MEMORY_ADDRESS_, 0x8000000,  IOMMU_READ | IOMMU_WRITE);
 +	if (ret)
 +		goto out_detach;
-+
++#undef _MY_BIOS_STOLEM_MEMORY_ADDRESS_
  	resv_msi = vfio_iommu_has_sw_msi(&group_resv_regions, &resv_msi_base);
  
  	INIT_LIST_HEAD(&domain->group_list);
